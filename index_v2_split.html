@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Orienteering Overlay App - Autoplay & Leaderboard</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+    <style>
+        body {
+            background-color: #00FF00; 
+            margin: 0;
+            height: 100vh;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            color: white;
+            overflow: hidden;
+            /* Cursore a puntatore per far capire che lo sfondo è cliccabile per la pausa */
+            cursor: default; 
+        }
+
+        #setup-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background-color: white;
+            color: black;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            z-index: 1000;
+            width: 320px;
+            font-size: 14px;
+        }
+
+        #setup-panel input {
+            width: 90%;
+            margin-top: 5px;
+            margin-bottom: 15px;
+        }
+
+        #setup-panel button {
+            background-color: #000;
+            color: #fff;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 6px;
+            cursor: pointer;
+            width: 100%;
+            font-weight: bold;
+        }
+
+        /* Tasto Pausa / Stop in basso a destra */
+        #stop-btn {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background-color: rgba(0,0,0,0.7);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: 2px solid white;
+            font-weight: bold;
+            cursor: pointer;
+            display: none; /* Invisibile finché non parte il tempo */
+            z-index: 1000;
+        }
+
+        .overlay-container {
+            position: absolute;
+            /* Usiamo top con "vh" (Viewport Height, percentuale dello schermo) */
+            top: 50vh; 
+            left: 50px;
+            display: flex;
+            flex-direction: column; /* Mantiene l'ordine naturale */
+            gap: 12px;
+            width: 290px;
+            pointer-events: none; 
+        }
+
+       .panel {
+            background-color: rgba(15, 15, 15, 0.85);
+            border-radius: 12px;
+            padding: 12px 14px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .header-panel {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: transparent;
+            padding: 0 5px; /* Allinea il testo ai bordi dei pannelli sottostanti */
+            margin-bottom: 5px;
+        }
+
+        /* Ombreggiatura per leggere bene il testo bianco direttamente sul video */
+        .header-panel .subtitle, .header-panel .main-text, .header-panel .time-value {
+            text-shadow: 1px 1px 4px rgba(0,0,0,0.9);
+        }
+
+        .race-info-container {
+            background: transparent;
+            padding: 0 5px;
+            margin-bottom: 5px;
+            text-shadow: 1px 1px 4px rgba(0,0,0,0.9);
+        }
+
+        .race-title {
+            font-size: 16px;
+            font-weight: 900;
+            text-transform: uppercase;
+            color: #ffffff;
+            letter-spacing: 0.5px;
+        }
+
+        .subtitle { 
+            font-size: 12px; 
+            font-weight: 600; 
+            text-transform: uppercase; 
+            color: #ffffff; /* Sostituito da #aaaaaa a #ffffff */
+            letter-spacing: 0.5px;
+            text-shadow: 1px 1px 4px rgba(0, 0, 0, 0.9);
+        }
+
+        .race-category {
+            font-size: 13px;
+            color: #ffffff;
+            font-weight: 700;
+            text-transform: uppercase;
+            text-shadow: 1px 1px 4px rgba(0, 0, 0, 0.9);
+        }
+
+        .main-text { font-size: 18px; font-weight: bold; color: #ffffff; margin-top: 4px; }
+        .time-value { font-size: 24px; font-weight: bold; text-align: right; }
+        
+        /* CLASSIFICA FISSA: Sfondo scuro e niente scomparsa */
+        #leaderboard-panel { 
+            display: block; 
+        }
+        
+        .leaderboard-title {
+            font-size: 13px;
+            font-weight: bold;
+            color: #ffffff;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .lb-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 0;
+            font-size: 15px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        
+        .lb-row:last-child { border-bottom: none; }
+
+        .lb-rank-name { display: flex; gap: 10px; }
+        .lb-rank { font-weight: bold; width: 18px; color: #aaaaaa; }
+        .lb-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px; }
+        
+        .lb-times { display: flex; flex-direction: column; align-items: flex-end; }
+        .lb-time { font-weight: bold; }
+        .lb-diff { font-size: 11px; color: #f87171; }
+        
+        .lb-row.target-athlete { color: #facc15; }
+        .lb-row.target-athlete .lb-rank, .lb-row.target-athlete .lb-diff { color: #facc15; }
+        
+        .separator {
+            text-align: center;
+            line-height: 10px;
+            color: #aaaaaa;
+            margin: 2px 0;
+        }
+
+        .sensors-container { display: flex; gap: 15px; }
+        .sensor-panel { flex: 1; }
+        .sensor-header { font-size: 11px; text-transform: uppercase; color: #aaaaaa; margin-bottom: 5px; }
+        .sensor-value { font-size: 20px; font-weight: bold; }
+
+        .hr-value { 
+            color: #38bdf8; /* Azzurro chiaro: perfetto per il green screen e molto leggibile */ 
+        }        
+
+        .pace-value { color: #f87171; } 
+        .unit { font-size: 12px; font-weight: normal; }
+
+        /* PANNELLO SPLIT CENTRALE */
+        #leg-split-panel {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -40%); /* Parte leggermente più in basso */
+            width: 380px;
+            visibility: hidden;
+            opacity: 0;
+            transition: opacity 0.6s ease, transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1), visibility 0.6s;
+            z-index: 500; /* Lo fa stare sopra a tutto il resto */
+        }
+
+        #leg-split-panel.show-centered {
+            visibility: visible;
+            opacity: 1;
+            transform: translate(-50%, -50%); /* Si accentra perfettamente a molla */
+        }
+
+        .split-title {
+            font-size: 14px;
+            font-weight: bold;
+            color: #facc15; /* Giallo acceso per distinguerlo dalla classifica */
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-transform: uppercase;
+            text-shadow: 1px 1px 4px rgba(0,0,0,0.9);
+        }
+
+    </style>
+</head>
+<body id="bg-body">
+
+    <div id="setup-panel">
+        <h3>Impostazioni Dati</h3>
+        
+        <label>Nome Gara:</label>
+        <input type="text" id="race-name-input" value="---">
+
+        <label>Categoria:</label>
+        <input type="text" id="category-input" value="---">
+
+        <label>Tuo Nome (esattamente come nell'Excel):</label>
+        <input type="text" id="target-name" value="---">
+
+        <label>Carica Risultati (File Excel o CSV):</label>
+        <input type="file" id="excel-input" accept=".xlsx, .xls, .csv">
+
+        <label>Carica File GPX (con battito):</label>
+        <input type="file" id="gpx-input" accept=".gpx">
+
+        <label>Posizione (Scorrimento):</label>
+        <input type="range" id="time-slider" min="0" max="3000" value="0">
+        
+        <button onclick="startRecordingMode()">▶ Avvia Tempo (1x) & Registra</button>
+    </div>
+
+    <!-- Pulsante Stop -->
+    <button id="stop-btn" onclick="stopRecordingMode()">⏸ Pausa (Esc)</button>
+
+    <div class="overlay-container">
+        <!-- 1. INTESTAZIONE -->
+        <!-- INFO GARA TRASPARENTE -->
+        <div class="race-info-container">
+            <div class="race-title" id="display-race-name">Nome Gara</div>
+            <div class="race-category" id="display-category">Categoria</div>
+        </div>
+
+        <!-- 1. INTESTAZIONE TRASPARENTE -->
+        <div class="header-panel">
+            <div>
+                <div class="subtitle" id="athlete-display-name">ATLETA</div>
+                <div class="main-text" id="leg-text">Start - Control 1</div>
+            </div>
+            <div>
+                <div class="subtitle" style="text-align: right;">Race Time</div>
+                <div class="time-value" id="time-text">00:00</div>
+            </div>
+        </div>
+
+        <!-- 2. SENSORI -->
+        <div class="sensors-container">
+            <div class="panel sensor-panel">
+                <div class="sensor-header">♡ HR</div>
+                <div class="sensor-value hr-value"><span id="hr-text">--</span> <span class="unit">bpm</span></div>
+            </div>
+            <div class="panel sensor-panel">
+                <div class="sensor-header">✦ Pace</div>
+                <div class="sensor-value pace-value"><span id="pace-text">--:--</span> <span class="unit">/km</span></div>
+            </div>
+        </div>
+
+        <!-- 3. CLASSIFICA (Spostata in basso) -->
+        <div class="panel" id="leaderboard-panel">
+            <div class="leaderboard-title">🏆 Standings: <span id="lb-control-name">Control 1</span></div>
+            <div id="leaderboard-content"></div>
+        </div>
+    </div>
+
+    <!-- ... fine della overlay-container ... -->
+    
+    <!-- NUOVO PANNELLO DEGLI SPLIT AL CENTRO DELLO SCHERMO -->
+    <div class="panel" id="leg-split-panel">
+        <div class="split-title" id="split-title-text">⚡ Split: Start ➔ Control 1</div>
+        <div id="leg-split-content"></div>
+    </div>
+
+    <script>
+        let athletesData = []; 
+        let targetSplits = []; 
+        let gpxData = [];
+        let lastDisplayedControl = -1;
+        
+        let leaderboardTimer = null; 
+        const LEADERBOARD_DISPLAY_TIME = 12000; 
+        
+        let playbackInterval = null;
+        let currentRealSeconds = 0;
+        let isPlaying = false;
+
+        function formatTime(totalSeconds) {
+            if (isNaN(totalSeconds) || totalSeconds === undefined) return "--:--";
+            
+            let h = Math.floor(totalSeconds / 3600);
+            let m = Math.floor((totalSeconds % 3600) / 60);
+            let s = Math.floor(totalSeconds % 60);
+            
+            let sStr = s.toString().padStart(2, '0');
+            
+            if (h > 0) {
+                // Mostra le ore se la gara supera i 60 minuti
+                let mStr = m.toString().padStart(2, '0');
+                return `${h}:${mStr}:${sStr}`;
+            } else {
+                // Mostra solo minuti e secondi se sotto l'ora
+                return `${m}:${sStr}`;
+            }
+        }
+
+        // 1. CARICAMENTO EXCEL/CSV
+        document.getElementById('excel-input').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                const data = new Uint8Array(evt.target.result);
+                const workbook = XLSX.read(data, {type: 'array'});
+                const firstSheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[firstSheetName];
+                const rows = XLSX.utils.sheet_to_json(worksheet, {header: 1, raw: false, defval: ""});
+                
+                athletesData = [];
+
+                for (let cols of rows) {
+                    if (!cols || cols.length === 0) continue;
+                    let rankRaw = cols[0] ? String(cols[0]).replace(/\u00A0/g, ' ').trim() : "";
+                    let name = cols[1] ? String(cols[1]).replace(/\u00A0/g, ' ').trim() : "";
+
+                    if(rankRaw !== "" && !isNaN(parseInt(rankRaw)) && name !== "") {
+                        let splits = [];
+                        let lastValidTime = -1;
+
+                        for(let i = 2; i < cols.length; i++) {
+                            let cell = String(cols[i]).replace(/\u00A0/g, ' ').trim();
+                            //Cerca sia il formato H:MM:SS che MM:SS
+                            let timeMatch = cell.match(/^(\d{1,2}:\d{2}:\d{2}|\d{1,3}:\d{2})/);
+                            
+                            if (timeMatch) {
+                                let timeStr = timeMatch[1];
+                                let parts = timeStr.split(':');
+                                let secs = 0;
+                                
+                                // Se il tempo è nel formato H:MM:SS (3 blocchi)
+                                if (parts.length === 3) {
+                                    secs = parseInt(parts[0], 10) * 3600 + parseInt(parts[1], 10) * 60 + parseInt(parts[2], 10);
+                                } 
+                                // Se il tempo è nel formato MM:SS (2 blocchi)
+                                else if (parts.length === 2) {
+                                    secs = parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+                                }
+                                
+                                if (secs > lastValidTime) {
+                                    splits.push(secs);
+                                    lastValidTime = secs;
+                                }
+                            }
+                        }
+                        if(splits.length > 0) athletesData.push({ name: name, splits: splits });
+                    }
+                }
+
+                const targetNameInput = document.getElementById('target-name').value;
+                const targetAthlete = athletesData.find(a => a.name.toLowerCase().includes(targetNameInput.toLowerCase()));
+                
+                if (targetAthlete) {
+                    targetSplits = targetAthlete.splits;
+                    document.getElementById('athlete-display-name').innerText = targetAthlete.name;
+                    document.getElementById('time-slider').max = targetSplits[targetSplits.length - 1] + 60;
+                    alert(`✅ Classifica caricata! Atleta confermato: ${targetAthlete.name}`);
+                } else {
+                    alert(`❌ Errore: L'atleta '${targetNameInput}' non è stato trovato. Assicurati di aver scritto il nome uguale al file.`);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        // 2. CARICAMENTO GPX POTENZIATO
+        document.getElementById('gpx-input').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                const xml = new DOMParser().parseFromString(evt.target.result, "text/xml");
+                const trkpts = xml.getElementsByTagName("trkpt");
+                
+                gpxData = [];
+                for(let i=0; i<trkpts.length; i++) {
+                    const pt = trkpts[i];
+                    let timeNode = pt.getElementsByTagName("time")[0];
+                    
+                    // Cerca il nodo Heart Rate in tutte le estensioni possibili
+                    let hrText = "--";
+                    let hrNode = pt.getElementsByTagNameNS("*", "hr")[0]; 
+                    if(!hrNode) hrNode = pt.getElementsByTagName("gpxtpx:hr")[0];
+                    if(!hrNode) hrNode = pt.getElementsByTagName("ns3:hr")[0];
+                    if(!hrNode) hrNode = pt.getElementsByTagName("hr")[0];
+
+                    if(hrNode) hrText = hrNode.textContent;
+                    
+                    if(timeNode) {
+                        gpxData.push({
+                            time: new Date(timeNode.textContent).getTime(),
+                            lat: parseFloat(pt.getAttribute("lat")),
+                            lon: parseFloat(pt.getAttribute("lon")),
+                            hr: hrText
+                        });
+                    }
+                }
+                
+                if (gpxData.length > 0) {
+                    alert(`✅ GPX Caricato con successo! Trovati ${gpxData.length} punti di tracciamento.`);
+                } else {
+                    alert("❌ Errore: Il file GPX sembra non contenere coordinate di tempo valide.");
+                }
+            };
+            reader.readAsText(file);
+        });
+
+        // 3. LOGICA CLASSIFICA
+        function updateLeaderboard(controlIndex) {
+            // Se la gara non è ancora iniziata, mostra il pannello ma svuota i nomi
+            if (controlIndex < 0) {
+                document.getElementById('leaderboard-content').innerHTML = "";
+                document.getElementById('lb-control-name').innerText = "In attesa...";
+                return;
+            }
+
+            const targetNameInput = document.getElementById('target-name').value;
+            let validAthletes = athletesData.filter(a => a.splits[controlIndex] !== undefined);
+            validAthletes.sort((a, b) => a.splits[controlIndex] - b.splits[controlIndex]);
+
+            if(validAthletes.length === 0) return;
+
+            const bestTime = validAthletes[0].splits[controlIndex];
+            let myRank = validAthletes.findIndex(a => a.name.toLowerCase().includes(targetNameInput.toLowerCase()));
+            let me = validAthletes[myRank];
+
+            let html = "";
+            let numToShow = Math.min(3, validAthletes.length);
+
+            // FASE 1: Registra le posizioni attuali dei nomi (per l'animazione)
+            const oldElements = Array.from(document.querySelectorAll('.lb-row'));
+            const oldPos = {};
+            oldElements.forEach(el => {
+                const name = el.getAttribute('data-name');
+                if(name) oldPos[name] = el.getBoundingClientRect().top;
+            });
+
+            // FASE 2: Genera la nuova classifica aggiungendo l'attributo "data-name"
+            for(let i = 0; i < numToShow; i++) {
+                let a = validAthletes[i];
+                let isMe = a.name === (me ? me.name : "");
+                let diffSecs = a.splits[controlIndex] - bestTime;
+                let diffText = diffSecs > 0 ? "+" + formatTime(diffSecs) : "";
+                
+                html += `
+                <div class="lb-row ${isMe ? 'target-athlete' : ''}" data-name="${a.name}">
+                    <div class="lb-rank-name">
+                        <span class="lb-rank">${i+1}.</span>
+                        <span class="lb-name">${a.name}</span>
+                    </div>
+                    <div class="lb-times">
+                        <span class="lb-time">${formatTime(a.splits[controlIndex])}</span>
+                        ${diffText ? `<span class="lb-diff">${diffText}</span>` : ''}
+                    </div>
+                </div>`;
+            }
+
+            if (me && myRank >= 3) {
+                let diffSecs = me.splits[controlIndex] - bestTime;
+                html += `<div class="separator">. . .</div>`;
+                html += `
+                <div class="lb-row target-athlete" data-name="${me.name}">
+                    <div class="lb-rank-name">
+                        <span class="lb-rank">${myRank + 1}.</span>
+                        <span class="lb-name">${me.name}</span>
+                    </div>
+                    <div class="lb-times">
+                        <span class="lb-time">${formatTime(me.splits[controlIndex])}</span>
+                        <span class="lb-diff">+${formatTime(diffSecs)}</span>
+                    </div>
+                </div>`;
+            }
+
+            // Aggiorna la grafica a schermo
+            document.getElementById('leaderboard-content').innerHTML = html;
+            document.getElementById('lb-control-name').innerText = "Control " + (controlIndex + 1);
+
+            // FASE 3: Applica l'animazione di scambio (FLIP) più morbida
+            const newElements = Array.from(document.querySelectorAll('.lb-row'));
+            newElements.forEach(el => {
+                const name = el.getAttribute('data-name');
+                if (oldPos[name] !== undefined) {
+                    const newTop = el.getBoundingClientRect().top;
+                    const deltaY = oldPos[name] - newTop;
+                    
+                    if (deltaY !== 0) {
+                        // 1. Teletrasporto istantaneo nella vecchia posizione
+                        el.style.transform = `translateY(${deltaY}px)`;
+                        el.style.transition = 'none';
+                        
+                        // 2. Animazione verso la nuova posizione (Più lunga e fluida)
+                        requestAnimationFrame(() => {
+                            requestAnimationFrame(() => {
+                                el.style.transform = '';
+                                // Aumentato a 1.2s per renderlo leggibile e usato un'easing molto morbido
+                                el.style.transition = 'transform 1.2s cubic-bezier(0.34, 1.56, 0.64, 1)';
+                            });
+                        });
+                    }
+                } else {
+                    // Animazione per chi entra in classifica dal nulla (dissolvenza e leggero slide-up)
+                    el.style.opacity = 0;
+                    el.style.transform = 'translateY(15px)';
+                    el.style.transition = 'none';
+                    
+                    requestAnimationFrame(() => {
+                        requestAnimationFrame(() => {
+                            el.style.opacity = 1;
+                            el.style.transform = 'translateY(0)';
+                            // Dissolvenza morbida di 1 secondo
+                            el.style.transition = 'opacity 1s ease, transform 1s ease';
+                        });
+                    });
+                }
+            });
+        }
+
+        // 4. LOGICA GPX DISTANZA
+        function getDistanceKm(lat1, lon1, lat2, lon2) {
+            const R = 6371; 
+            const dLat = (lat2 - lat1) * (Math.PI/180);
+            const dLon = (lon2 - lon1) * (Math.PI/180);
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1 * (Math.PI/180)) * Math.cos(lat2 * (Math.PI/180)) * Math.sin(dLon/2) * Math.sin(dLon/2); 
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+            return R * c; 
+        }
+
+        // 5. UPDATE GLOBALE
+        function updateUI(secondsElapsed) {
+            document.getElementById('time-text').innerText = formatTime(secondsElapsed);
+
+            let currentControl = 0;
+            for(let i = 0; i < targetSplits.length; i++) {
+                if(secondsElapsed > targetSplits[i]) currentControl = i + 1;
+                else break;
+            }
+            
+            let legText = "Start - Control 1";
+            if (currentControl > 0 && currentControl < targetSplits.length) {
+                legText = `Control ${currentControl} - Control ${currentControl + 1}`;
+            } else if (currentControl >= targetSplits.length && targetSplits.length > 0) {
+                legText = "Finish";
+            }
+            document.getElementById('leg-text').innerText = legText;
+
+            let controlToShow = currentControl - 1; 
+            if (controlToShow !== lastDisplayedControl) {
+                updateLeaderboard(controlToShow);
+                showLegSplit(controlToShow); // <--- AGGIUNTA QUESTA RIGA QUI
+                lastDisplayedControl = controlToShow;
+            }
+
+            if (gpxData.length > 1) {
+                const startTime = gpxData[0].time;
+                const targetTime = startTime + (secondsElapsed * 1000);
+                
+                let currentPt = gpxData[0];
+                let prevPt = gpxData[0];
+                
+                for(let i = 1; i < gpxData.length; i++) {
+                    if(gpxData[i].time > targetTime) {
+                        currentPt = gpxData[i];
+                        prevPt = gpxData[i-1];
+                        break;
+                    }
+                }
+
+                document.getElementById('hr-text').innerText = currentPt.hr;
+
+                let distKm = getDistanceKm(prevPt.lat, prevPt.lon, currentPt.lat, currentPt.lon);
+                let timeHours = (currentPt.time - prevPt.time) / 1000 / 3600;
+                
+                if (distKm > 0 && timeHours > 0) {
+                    let paceMinKm = (1 / (distKm / timeHours)) * 60; 
+                    if (paceMinKm > 2 && paceMinKm < 40) { 
+                        let paceM = Math.floor(paceMinKm);
+                        let paceS = Math.floor((paceMinKm - paceM) * 60);
+                        document.getElementById('pace-text').innerText = `${paceM}:${paceS.toString().padStart(2, '0')}`;
+                    } else {
+                        document.getElementById('pace-text').innerText = "--:--";
+                    }
+                }
+            }
+        }
+
+        document.getElementById('time-slider').addEventListener('input', function(e) {
+            currentRealSeconds = parseInt(e.target.value);
+            updateUI(currentRealSeconds);
+        });
+
+        // 6. AVVIO E STOP DEL TEMPO
+        function startRecordingMode() {
+            // Controlli di sicurezza prima di partire!
+            if (athletesData.length === 0) {
+                alert("⚠️ Attenzione: Non hai caricato il file della classifica (Excel/CSV).");
+                return;
+            }
+            if (targetSplits.length === 0) {
+                alert("⚠️ Attenzione: Il nome atleta inserito non è stato trovato nella classifica.");
+                return;
+            }
+            if (gpxData.length === 0) {
+                if(!confirm("⚠️ Attenzione: Non hai caricato il file GPX. Vuoi avviare lo stesso solo con la classifica?")) {
+                    return;
+                }
+            }
+
+            document.getElementById('setup-panel').style.display = 'none';
+            document.getElementById('stop-btn').style.display = 'block'; // Mostra pulsante pausa
+            
+            currentRealSeconds = parseInt(document.getElementById('time-slider').value) || 0;
+            isPlaying = true;
+            
+            if (playbackInterval) clearInterval(playbackInterval);
+            
+            playbackInterval = setInterval(() => {
+                currentRealSeconds++;
+                updateUI(currentRealSeconds);
+                document.getElementById('time-slider').value = currentRealSeconds;
+            }, 1000);
+        }
+
+        function stopRecordingMode() {
+            if (playbackInterval) clearInterval(playbackInterval);
+            isPlaying = false;
+            document.getElementById('setup-panel').style.display = 'block';
+            document.getElementById('stop-btn').style.display = 'none'; // Nascondi pulsante pausa
+            // Trasferisce i testi digitati nell'interfaccia a schermo
+            document.getElementById('display-race-name').innerText = document.getElementById('race-name-input').value;
+            document.getElementById('display-category').innerText = document.getElementById('category-input').value;
+        }
+
+        // 7. LOGICA SPLIT DELLA SINGOLA TRATTA
+        let legSplitTimer = null;
+        const LEG_SPLIT_DISPLAY_TIME = 8000; // Scompare dopo 10 secondi
+
+        function showLegSplit(controlIndex) {
+            const splitPanel = document.getElementById('leg-split-panel');
+            if (controlIndex < 0) {
+                splitPanel.classList.remove('show-centered');
+                return;
+            }
+
+            const targetNameInput = document.getElementById('target-name').value;
+            let legAthletes = [];
+
+            // Calcola il tempo della SINGOLA tratta per tutti gli atleti
+            for (let a of athletesData) {
+                if (a.splits[controlIndex] !== undefined) {
+                    let prevTime = controlIndex === 0 ? 0 : a.splits[controlIndex - 1];
+                    // Deve avere punzonato anche la lanterna precedente per avere un parziale valido
+                    if (prevTime !== undefined || controlIndex === 0) {
+                        let legTime = a.splits[controlIndex] - prevTime;
+                        legAthletes.push({ name: a.name, legTime: legTime });
+                    }
+                }
+            }
+
+            // Ordina dal più veloce al più lento in questa specifica tratta
+            legAthletes.sort((a, b) => a.legTime - b.legTime);
+
+            if(legAthletes.length === 0) return;
+
+            const bestLegTime = legAthletes[0].legTime;
+            let myRank = legAthletes.findIndex(a => a.name.toLowerCase().includes(targetNameInput.toLowerCase()));
+            let me = legAthletes[myRank];
+
+            let html = "";
+            let numToShow = Math.min(5, legAthletes.length); // Top 5 Split
+
+            for(let i = 0; i < numToShow; i++) {
+                let a = legAthletes[i];
+                let isMe = a.name === (me ? me.name : "");
+                let diffSecs = a.legTime - bestLegTime;
+                let diffText = diffSecs > 0 ? "+" + formatTime(diffSecs) : "";
+                
+                html += `
+                <div class="lb-row ${isMe ? 'target-athlete' : ''}">
+                    <div class="lb-rank-name">
+                        <span class="lb-rank">${i+1}.</span>
+                        <span class="lb-name">${a.name}</span>
+                    </div>
+                    <div class="lb-times">
+                        <span class="lb-time">${formatTime(a.legTime)}</span>
+                        ${diffText ? `<span class="lb-diff">${diffText}</span>` : ''}
+                    </div>
+                </div>`;
+            }
+
+            // Aggiunge te stesso se sei fuori dalla Top 5
+            if (me && myRank >= 5) {
+                let diffSecs = me.legTime - bestLegTime;
+                html += `<div class="separator">. . .</div>`;
+                html += `
+                <div class="lb-row target-athlete">
+                    <div class="lb-rank-name">
+                        <span class="lb-rank">${myRank + 1}.</span>
+                        <span class="lb-name">${me.name}</span>
+                    </div>
+                    <div class="lb-times">
+                        <span class="lb-time">${formatTime(me.legTime)}</span>
+                        <span class="lb-diff">+${formatTime(diffSecs)}</span>
+                    </div>
+                </div>`;
+            }
+
+            document.getElementById('leg-split-content').innerHTML = html;
+            
+            // Aggiorna il titolo con il nome della tratta
+            let prevControl = controlIndex === 0 ? "Start" : `C${controlIndex}`;
+            let thisControl = `C${controlIndex + 1}`;
+            document.getElementById('split-title-text').innerText = `⚡ Leg Splits: ${prevControl} ➔ ${thisControl}`;
+            
+            // Mostra il pannello al centro
+            splitPanel.classList.add('show-centered');
+
+            // Avvia il timer per farlo scomparire
+            if (legSplitTimer) clearTimeout(legSplitTimer);
+            legSplitTimer = setTimeout(() => {
+                splitPanel.classList.remove('show-centered');
+            }, LEG_SPLIT_DISPLAY_TIME);
+        }
+
+        // Shortcut da Tastiera e Mouse per mettere in Pausa
+        document.getElementById('bg-body').addEventListener('click', function(e) {
+            // Se clicchi sul verde mentre sta registrando, va in pausa
+            if (isPlaying && e.target.id === 'bg-body') {
+                stopRecordingMode();
+            }
+        });
+
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                stopRecordingMode();
+            }
+        });
+    </script>
+</body>
+</html>
